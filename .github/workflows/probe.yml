@@ -8,35 +8,12 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-26.04, ubuntu-24.04]
+        n: [1, 2, 3, 4, 5, 6]
     runs-on: ${{ matrix.os }}
     steps:
-      - name: Measure both stores
+      - name: Disks and space
         run: |
-          set -x
-          IMAGES="google/deepvariant:1.10.0 broadinstitute/gatk:4.7.0.0 ghcr.io/hassansaei/vntyper:2.0.47"
-          docker version -f '{{.Server.Version}}'; docker info -f '{{.Driver}} {{json .DriverStatus}}'
-          cat /etc/docker/daemon.json || true
-          df -k / | tail -1
-          before=$(df --output=used -k / | tail -1)
-          for i in $IMAGES; do docker pull -q "$i"; done
-          docker image ls; docker system df
-          after=$(df --output=used -k / | tail -1)
-          echo "DEFAULT STORE: $(( (after - before) / 1024 )) MB of disk for: $(docker image inspect -f '{{.Size}}' $IMAGES | awk '{s+=$1} END {printf "%d MB inspect size", s/1048576}')"
-          # The e2e.yml step
-          if docker info -f '{{json .DriverStatus}}' | grep -q io.containerd.snapshotter; then
-            docker image prune -a -f > /dev/null
-            f=/etc/docker/daemon.json
-            { [ -s "$f" ] && sudo cat "$f" || echo '{}'; } \
-              | jq '.features["containerd-snapshotter"] = false' | sudo tee "${f}.new" > /dev/null
-            sudo mv "${f}.new" "$f"
-            sudo systemctl restart docker
-          fi
-          cat /etc/docker/daemon.json
-          docker info -f '{{.Driver}} {{json .DriverStatus}}'
-          sudo du -sh /var/lib/containerd /var/lib/docker 2>/dev/null || true
-          before=$(df --output=used -k / | tail -1)
-          for i in $IMAGES; do docker pull -q "$i"; done
-          docker system df
-          after=$(df --output=used -k / | tail -1)
-          echo "AFTER SWITCH: $(( (after - before) / 1024 )) MB of disk for: $(docker image inspect -f '{{.Size}}' $IMAGES | awk '{s+=$1} END {printf "%d MB inspect size", s/1048576}')"
-          docker run --rm --network none google/deepvariant:1.10.0 true && echo run-ok
+          df -h
+          lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT
+          sudo du -xsh /usr/local/lib/node_modules /usr/local/share/* /usr/local/lib/* /opt/* /opt/hostedtoolcache/* /usr/lib/jvm /usr/share/* /usr/lib/* /var/lib/docker /var/lib/containerd /home/runner /snap /var/cache 2>/dev/null | sort -h | tail -30
+          docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}'
