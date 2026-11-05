@@ -8,12 +8,54 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-26.04, ubuntu-24.04]
-        n: [1, 2, 3, 4, 5, 6]
+        n: [1, 2, 3, 4, 5, 6, 7, 8]
     runs-on: ${{ matrix.os }}
     steps:
-      - name: Disks and space
+      - name: Mount a spare disk
         run: |
-          df -h
-          lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT
-          sudo du -xsh /usr/local/lib/node_modules /usr/local/share/* /usr/local/lib/* /opt/* /opt/hostedtoolcache/* /usr/lib/jvm /usr/share/* /usr/lib/* /var/lib/docker /var/lib/containerd /home/runner /snap /var/cache 2>/dev/null | sort -h | tail -30
-          docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}'
+          if mountpoint -q /mnt; then echo "/mnt is already a mount"; df -h /mnt; exit 0; fi
+          disk=""
+          while read -r name type; do
+            [ "$type" = disk ] || continue
+            # Blank: no partition, no file system, nothing mounted.
+            [ "$(lsblk -nro NAME "$name" | wc -l)" -eq 1 ] || continue
+            [ -z "$(lsblk -ndro FSTYPE,MOUNTPOINT "$name" | tr -d ' ')" ] || continue
+            disk=$name
+          done < <(lsblk -dnpo NAME,TYPE)
+          if [ -z "$disk" ]; then echo "No blank disk on this runner"; exit 0; fi
+          echo "Formatting ${disk} ($(lsblk -ndo SIZE "$disk")) and mounting it at /mnt"
+          sudo mkfs.ext4 -q -F -E nodiscard "$disk"
+          sudo mkdir -p /mnt
+          sudo mount -o noatime "$disk" /mnt
+          df -h / /mnt
+          echo "Spare disk: ${disk}, $(df -h --output=avail /mnt | tail -1 | tr -d ' ') free at /mnt" >> "$GITHUB_STEP_SUMMARY"
+      - name: Docker image store
+        run: |
+          change=.
+          if docker info -f '{{json .DriverStatus}}' | grep -q io.containerd.snapshotter; then
+            change+=' | .features["containerd-snapshotter"] = false'
+          fi
+          if mountpoint -q /mnt && [ "$(df --output=avail -k /mnt | tail -1)" -gt "$(df --output=avail -k / | tail -1)" ]; then
+            change+=' | .["data-root"] = "/mnt/docker"'
+          fi
+          if [ "$change" != . ]; then
+            docker image prune -a -f > /dev/null
+            f=/etc/docker/daemon.json
+            { [ -s "$f" ] && sudo cat "$f" || echo '{}'; } | jq "$change" | sudo tee "${f}.new" > /dev/null
+            sudo mv "${f}.new" "$f"
+            sudo systemctl restart docker
+          fi
+          driver=$(docker info -f '{{.Driver}}') root=$(docker info -f '{{.DockerRootDir}}')
+          echo "Docker $(docker version -f '{{.Server.Version}}'), storage driver ${driver}, data root ${root}" | tee -a "$GITHUB_STEP_SUMMARY"
+          [ "$driver" = overlay2 ] || { echo "::error::Docker's storage driver is ${driver}, not overlay2."; exit 1; }
+          if mountpoint -q /mnt && [[ "$change" == *data-root* ]] && [ "$root" != /mnt/docker ]; then
+            echo "::error::Docker's data root is ${root}, not /mnt/docker on the spare disk."; exit 1
+          fi
+          df -h / /mnt
+      - name: Pull lands on the data root
+        run: |
+          before=$(df --output=used -k "$(docker info -f '{{.DockerRootDir}}')" | tail -1)
+          docker pull -q google/deepvariant:1.10.0
+          after=$(df --output=used -k "$(docker info -f '{{.DockerRootDir}}')" | tail -1)
+          echo "RESULT root=$(docker info -f '{{.DockerRootDir}}') pull=$(( (after-before)/1024 )) MB on $(df --output=source "$(docker info -f '{{.DockerRootDir}}')" | tail -1); / free $(df -h --output=avail / | tail -1); /mnt free $(df -h --output=avail /mnt | tail -1)"
+          docker run --rm --network none google/deepvariant:1.10.0 true && echo RESULT run-ok
