@@ -29,6 +29,16 @@ const USAGE: &str = "usage: og <tool> [args]
        og pgx refblock-fill|mito-merge|cyp2d6-bed|cyp2d6-measure|cyp2d6-check [args]
        og str motif [args]
        og chip prepare|report|check-table [args]
+       og vntyper report [args]
+       og locityper report [args]
+       og mocha report [args]
+       og mei report [args]
+       og mei annotsv-input [args]
+       og viral report [args]
+       og y str-bed [args]
+       og y str-report [args]
+       og exomiser prepare [args]
+       og exomiser report [args]
        og dev parity-compare KIND ORACLE NEW
        og version
        og --tree-hash
@@ -134,6 +144,20 @@ fn main() -> ExitCode {
             )),
             None => usage_error("the following arguments are required: chip tool"),
         },
+        "vntyper" | "locityper" | "mocha" | "mei" | "viral" | "y" | "exomiser" => {
+            let verb = rest.first().map(String::as_str);
+            let args = rest.get(1..).unwrap_or_default();
+            let (out, err) = (&mut std::io::stdout().lock(), &mut std::io::stderr().lock());
+            ExitCode::from(match tool.as_str() {
+                "vntyper" => og_reports::vntyper::cli(verb, args, out, err),
+                "locityper" => og_reports::locityper::cli(verb, args, out, err),
+                "mocha" => og_reports::mocha::cli(verb, args, out, err),
+                "mei" => og_reports::mei::cli(verb, args, out, err),
+                "viral" => og_reports::viral::cli(verb, args, out, err),
+                "y" => og_reports::ystr::cli(verb, args, out, err),
+                _ => og_reports::exomiser::cli(verb, args, out, err),
+            })
+        }
         "str" => match rest.first().map(String::as_str) {
             #[cfg(feature = "bam")]
             Some("motif") => ExitCode::from(og_bam::motif::cli(

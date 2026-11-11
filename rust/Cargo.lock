@@ -560,6 +560,7 @@ dependencies = [
  "og-io",
  "og-map",
  "og-pgx",
+ "og-reports",
  "og-runlog",
  "og-steps",
  "og-vcf",
@@ -648,6 +649,17 @@ name = "og-pgx"
 version = "0.1.0"
 dependencies = [
  "og-io",
+ "pycompat",
+]
+
+[[package]]
+name = "og-reports"
+version = "0.1.0"
+dependencies = [
+ "indexmap",
+ "og-filters",
+ "og-io",
+ "og-tsv",
  "pycompat",
 ]
 
